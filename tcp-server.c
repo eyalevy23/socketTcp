@@ -3,8 +3,6 @@
 */
 
 #include <stdio.h>
-
-// Linux and other UNIXes
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -13,32 +11,16 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
+
 #define MAX 4096
 #define SERVER_PORT 5060 // The port that the server listens
 
-// void readFromSocket(int clientSocket)
-// {
-//     char buff[MAX];
-//     int n;
-//     int numread = 1;
-//     while (numread > 0)
-//     {
-//         // read the message from client and copy it in buffer
-//         numread = read(clientSocket, buff, sizeof(buff));
-//         // print buffer which contains the client contents
-//         if (numread > 0)
-//         {
-//             printf("%s", buff);
-//         }
-//         else
-//         {
-//             printf("\n completed reading file \n");
-//         }
-//     }
-// }
-
 int reachedHalf(char buff[]);
 int requestToExit(char buff[]);
+int finishAll(char buff[]);
+void sendAuthentication(int clientSocket);
+void printOutTimes(double timeFirstHalf,double timeLastPart,int counter);
 
 int main()
 {
@@ -90,14 +72,13 @@ int main()
     }
 
     // Accept and incoming connection
-    printf("Waiting for incoming TCP-connections...\n");
-
     struct sockaddr_in clientAddress; //
     socklen_t clientAddressLen = sizeof(clientAddress);
     int continueToListnerToNewConnections = 1;
 
     while (continueToListnerToNewConnections)
     {
+        printf("Waiting for incoming TCP-connections...\n");
         memset(&clientAddress, 0, sizeof(clientAddress));
         clientAddressLen = sizeof(clientAddress);
         int clientSocket = accept(listeningSocket, (struct sockaddr *)&clientAddress, &clientAddressLen);
@@ -111,60 +92,62 @@ int main()
         }
         int byteRecieved = 0;
         long messegeLen = 0;
-        // int test = recv(clientSocket, &messegeLen, sizeof(messegeLen), 0);
-        // printf("%ld\n", messegeLen);
         int continueToListenOnOpenSocket = 1;
-        int hasSentAuth = 0;
-
         long totalRecieved = 0;
+        int charRead = 0;
+        double timeFirstHalf = 0;
+        double timeLastPart = 0;
+        clock_t start, end;
+        double cpu_time_used;
+        int counter = 0;
+
         while (continueToListenOnOpenSocket)
-        {
+        {   
             char buff[MAX];
 
+            //start measure time for the first half
+            start = clock();
+
+            //receiv file from clint
             recv(clientSocket, buff, MAX, 0);
-            int charRead = strlen(buff);
+            charRead = strlen(buff);
             totalRecieved += charRead;
+
             if (reachedHalf(buff))
             {
                 printf("first half recived. Total read: %ld\n",totalRecieved);
+                //stop time 
+                end = clock();
+                cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+                timeFirstHalf += cpu_time_used;
+                counter++;
+
+
+                sendAuthentication(clientSocket);
+                //measure time for last part
+                start = clock();
+                
             }
+
+            if(finishAll(buff)){
+                printf("recive complete all. Total read: %ld\n",totalRecieved);
+                //stop time
+                end = clock();
+                cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+                timeLastPart += cpu_time_used;
+                totalRecieved = 0;
+            }
+
             if (requestToExit(buff))
             {
                 printf("request to exit recived\n");
                 break;
             }
-
-            // send authentication
-            if (hasSentAuth == 0)
-            {
-                int xor = (5512 ^ 3065);
-                int bytesSent = send(clientSocket, &xor, 4, 0);
-                hasSentAuth = 1;
-            }
         }
-
-        // Reply to client
-        //  char message[] = "Welcome to our TCP-server\n";
-        //  int messageLen = strlen(message) + 1;
-
-        // int bytesSent = send(clientSocket, message, messageLen, 0);
-        // if (-1 == bytesSent)
-        // {
-        // 	printf("send() failed with error code : %d" , errno);
-        // }
-        // else if (0 == bytesSent)
-        // {
-        //    printf("peer has closed the TCP connection prior to send().\n");
-        // }
-        // else if (messageLen > bytesSent)
-        // {
-        //    printf("sent only %d bytes from the required %d.\n", bytesSent, messageLen);
-        // }
-        // else
-        // {
-        //    printf("message was successfully sent .\n");
-        // }
+        printOutTimes(timeFirstHalf, timeLastPart, counter);
     }
+
+    
 
     // TODO: All open clientSocket descriptors should be kept
     // in some container and closed as well.
@@ -173,9 +156,27 @@ int main()
     return 0;
 }
 
+void sendAuthentication(int clientSocket){
+    int xor = (5512 ^ 3065);
+    int bytesSent = send(clientSocket, &xor, 4, 0);
+}
+
 int reachedHalf(char buff[])
 {
     int result = strcmp("half", buff);
+    if (result == 0)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+int finishAll(char buff[])
+{
+    int result = strcmp("finish_all", buff);
     if (result == 0)
     {
         return 1;
@@ -197,4 +198,9 @@ int requestToExit(char buff[])
     {
         return 0;
     }
+}
+
+void printOutTimes(double timeFirstHalf,double timeLastPart,int counter){
+    printf("avarge time for first half : %f\n", (timeFirstHalf/counter));
+    printf("avarge time for last half : %f\n", (timeLastPart/counter));
 }

@@ -26,89 +26,65 @@ int validateAuthentication(int authentication);
 int createSocket();
 long send_file(FILE *fp, int sockfd, long messegeLen);
 void sendCompleteHalf(int sock);
-
-FILE *readFile2(long *fileSize)
-{
-     FILE *f = fopen("gistfile1.txt", "rb");
-     fseek(f, 0, SEEK_END);
-     long fsize = ftell(f);
-     long mid = fsize/2;
-     rewind(f);
-     *fileSize = fsize;
-     return f;
-}
-
-// char *readFile(int part, long *fileSize)
-// {
-
-//      FILE *f = fopen("textfile.txt", "rb");
-//      fseek(f, 0, SEEK_END);
-//      long fsize = ftell(f);
-//      fseek(f, part ? fsize / 2 : 0, SEEK_SET); /* same as rewind(f); */
-
-//      char *string = malloc(fsize / 2 + 1);
-//      fread(string, fsize / 2, 1, f);
-//      fclose(f);
-//      *fileSize = fsize;
-//      return string;
-// }
+void sendCompleteLastPart(int sock);
+FILE *readFile(long *fileSize);
 
 
 
 int main()
 {
-
-     int bytesSent;
+     int bytesSent = 0;
      long messageLen = 0;
+
      //read file 
      printf("reading file\n");
-     FILE *fp = readFile2(&messageLen);
+     FILE *fp = readFile(&messageLen);
 
      //create socket 
      int sock = createSocket();
 
-
-     char cubic[10] = {0};
-     strcpy(cubic, "cubic");
-     int hasSentAuth = 0;
      int loop = 1;
      while (loop == 1)
      {    
           rewind(fp);
           // CC Algorithm : cubic
-          // setsockopt(sock,IPPROTO_TCP,TCP_CONGESTION,cubic,5);
-          // bzero(cubic, 10);
-          // getsockopt(sock,IPPROTO_TCP,TCP_CONGESTION,&cubic,5);
-          // printf("%s", cubic);
+          if(setsockopt(sock,IPPROTO_TCP, TCP_CONGESTION, "cubic", 5) != 0){
+               perror("setsockopt field error");
+               return -1;
+          }
+         
 
           int total = 0;
           //send first part of file
           long bytesSent = send_file(fp, sock, messageLen/2);
           sendCompleteHalf(sock);
-          // bytesSent = send(sock, fileContent1, messageLen / 2, 0);
-          // send_file(fileContent1,sock);
           total += bytesSent;
 
-          if (hasSentAuth == 0){
-               if (validateAuthentication(sock) == -1)
-               {
-                    return -1;
-               }
-               hasSentAuth = 1;
+          //check for authentication
+          if (validateAuthentication(sock) == -1)
+          {
+               return -1;
           }
 
-          // Change the CC Algorithm to reno
-          setsockopt(sock,IPPROTO_TCP,TCP_CONGESTION,"reno",4);
+          // Change the CC Algorithm : reno
+          if(setsockopt(sock,IPPROTO_TCP,TCP_CONGESTION,"reno",4) != 0){
+               perror("setsockopt field error");
+               return -1;
+          }
 
           // Send the second part of file 
           send_file(fp, sock, messageLen/2);
-          // bytesSent = send(sock, fileContent2, messageLen / 2, 0);
-
           total += bytesSent;
+          sendCompleteLastPart(sock);
+
           printOnComplete(total, messageLen);
+
+          //user desision for sending the file again
           printf("enter 1 to continue : ");
           scanf("%d", &loop);
      }
+
+     //finsih while loop and send exit in order to close the socket
      sendExit(sock);
      // TODO: All open clientSocket descriptors should be kept
      // in some container and closed as well.
@@ -201,7 +177,23 @@ void sendCompleteHalf(int sock)
      send(sock, compMessage, 1024, 0);
 }
 
+void sendCompleteLastPart(int sock)
+{
+     char compMessage[] = "finish_all";
+     int messageLen2 = strlen(compMessage) + 1;
+     send(sock, compMessage, 1024, 0);
+}
 
+FILE *readFile(long *fileSize)
+{
+     FILE *f = fopen("gistfile1.txt", "rb");
+     fseek(f, 0, SEEK_END);
+     long fsize = ftell(f);
+     long mid = fsize/2;
+     rewind(f);
+     *fileSize = fsize;
+     return f;
+}
 
 long send_file(FILE *fp, int sockfd, long messegeLen){
      int bytesToRead = MAX;
@@ -223,12 +215,4 @@ long send_file(FILE *fp, int sockfd, long messegeLen){
      }
      return totalRead;
 }
-
-/*unneeded code :
-     char *fileContent1 = readFile(0, &messageLen);
-     char *fileContent2 = readFile(1, &messageLen);
-     fseek(f, part ? fsize / 2 : 0, SEEK_SET); /* same as rewind(f);
-          int fileBytesSend = send(sock, &messageLen, sizeof(messageLen), 0);
-     printf("messege len sent\n");
-*/
 
