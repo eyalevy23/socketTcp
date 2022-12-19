@@ -13,30 +13,32 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
-#define MAX 1024
-
+#define MAX 4096
 #define SERVER_PORT 5060 // The port that the server listens
 
-void readFromSocket(int clientSocket)
-{
-    char buff[MAX];
-    int n;
-    int numread = 1;
-    while (numread > 0)
-    {
-        // read the message from client and copy it in buffer
-        numread = read(clientSocket, buff, sizeof(buff));
-        // print buffer which contains the client contents
-        if (numread > 0)
-        {
-            printf("%s", buff);
-        }
-        else
-        {
-            printf("\n completed reading file \n");
-        }
-    }
-}
+// void readFromSocket(int clientSocket)
+// {
+//     char buff[MAX];
+//     int n;
+//     int numread = 1;
+//     while (numread > 0)
+//     {
+//         // read the message from client and copy it in buffer
+//         numread = read(clientSocket, buff, sizeof(buff));
+//         // print buffer which contains the client contents
+//         if (numread > 0)
+//         {
+//             printf("%s", buff);
+//         }
+//         else
+//         {
+//             printf("\n completed reading file \n");
+//         }
+//     }
+// }
+
+int reachedHalf(char buff[]);
+int requestToExit(char buff[]);
 
 int main()
 {
@@ -93,37 +95,49 @@ int main()
     struct sockaddr_in clientAddress; //
     socklen_t clientAddressLen = sizeof(clientAddress);
     int continueToListnerToNewConnections = 1;
+
     while (continueToListnerToNewConnections)
     {
         memset(&clientAddress, 0, sizeof(clientAddress));
         clientAddressLen = sizeof(clientAddress);
         int clientSocket = accept(listeningSocket, (struct sockaddr *)&clientAddress, &clientAddressLen);
         printf("A new client connection accepted\n");
-        
+
         if (clientSocket == -1)
         {
             printf("listen failed with error code : %d", errno);
             // TODO: close the sockets
             return -1;
         }
+        int byteRecieved = 0;
+        long messegeLen = 0;
+        // int test = recv(clientSocket, &messegeLen, sizeof(messegeLen), 0);
+        // printf("%ld\n", messegeLen);
         int continueToListenOnOpenSocket = 1;
         int hasSentAuth = 0;
+
+        long totalRecieved = 0;
         while (continueToListenOnOpenSocket)
         {
             char buff[MAX];
-            // frist file recive
-            int byteRecieved = recv(clientSocket, buff, MAX, 0);
-            int result = strcmp("exit", buff);
-            if (result == 0 || byteRecieved == 0)
+
+            recv(clientSocket, buff, MAX, 0);
+            int charRead = strlen(buff);
+            totalRecieved += charRead;
+            if (reachedHalf(buff))
             {
-                printf("closing client connection. Recieved exit \n");
+                printf("first half recived. Total read: %ld\n",totalRecieved);
+            }
+            if (requestToExit(buff))
+            {
+                printf("request to exit recived\n");
                 break;
             }
-            // readFromSocket(clientSocket);
+
             // send authentication
             if (hasSentAuth == 0)
             {
-                int xor = (5512 ^ 6035);
+                int xor = (5512 ^ 3065);
                 int bytesSent = send(clientSocket, &xor, 4, 0);
                 hasSentAuth = 1;
             }
@@ -157,4 +171,30 @@ int main()
 
     close(listeningSocket);
     return 0;
+}
+
+int reachedHalf(char buff[])
+{
+    int result = strcmp("half", buff);
+    if (result == 0)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+int requestToExit(char buff[])
+{
+    int result = strcmp("exit", buff);
+    if (result == 0)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
 }
