@@ -122,8 +122,9 @@ int main()
                 timeFirstHalf += cpu_time_used;
                 counter++;
 
-
+                //send Authentication key to clint
                 sendAuthentication(clientSocket);
+
                 //measure time for last part
                 start = clock();
                 
@@ -203,4 +204,5 @@ int requestToExit(char buff[])
 void printOutTimes(double timeFirstHalf,double timeLastPart,int counter){
     printf("avarge time for first half : %f\n", (timeFirstHalf/counter));
     printf("avarge time for last half : %f\n", (timeLastPart/counter));
+    printf("totle time : %f\n", (timeFirstHalf + timeLastPart));
 }

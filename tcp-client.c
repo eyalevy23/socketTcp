@@ -53,7 +53,6 @@ int main()
                return -1;
           }
          
-
           int total = 0;
           //send first part of file
           long bytesSent = send_file(fp, sock, messageLen/2);
