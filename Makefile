@@ -2,11 +2,11 @@
 
 all: tcp-server tcp-client
 
-tcp-server: Receiver.c
-	gcc -o tcp-server Receiver.c
+tcp-server: tcp-server.c
+	gcc -o tcp-server tcp-server.c
 
-tcp-client: Sender.c
-	gcc -o tcp-client Sender.c
+tcp-client: tcp-client.c
+	gcc -o tcp-client tcp-client.c
 
 clean:
 	rm -f *.o tcp-server tcp-client
