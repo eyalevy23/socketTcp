@@ -11,16 +11,27 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
+#include <sys/time.h>
 #include <time.h>
+#include <stdbool.h>
+#include <netinet/tcp.h>
 
+#define TIMEOUT 300000
 #define MAX 4096
-#define SERVER_PORT 5060 // The port that the server listens
+#define SERVER_PORT 9999 // The port that the server listens
+// code forom receiver to sender
+#define EXITCODE "exit"
+#define HALFCODE "half"
+#define FINISHCODE "finish_all"
 
 int reachedHalf(char buff[]);
 int requestToExit(char buff[]);
 int finishAll(char buff[]);
 void sendAuthentication(int clientSocket);
-void printOutTimes(double timeFirstHalf,double timeLastPart,int counter);
+void printOutTimes(double timing[], double timeFirstHalf, double timeLastPart, int counter);
+void sendACK(int sock);
+int recvACK(int sock);
+// void setTime(double timing[], double begin, double end);
 
 int main()
 {
@@ -90,65 +101,118 @@ int main()
             // TODO: close the sockets
             return -1;
         }
+        double timing[100];
+        long seconds, microseconds;
         int byteRecieved = 0;
-        long messegeLen = 0;
         int continueToListenOnOpenSocket = 1;
         long totalRecieved = 0;
         int charRead = 0;
         double timeFirstHalf = 0;
         double timeLastPart = 0;
-        clock_t start, end;
-        double cpu_time_used;
         int counter = 0;
+        struct timeval start, end;
+        bool startTiming = false;
+        bool userDesitionTimeOut = false;
+        char buff[MAX];
+        long allFileRece;
 
+        // CC Algorithm : cubic
+        if (setsockopt(clientSocket, IPPROTO_TCP, TCP_CONGESTION, "cubic", 5) != 0)
+        {
+            perror("setsockopt field error");
+            return -1;
+        }
         while (continueToListenOnOpenSocket)
-        {   
-            char buff[MAX];
+        {
 
-            //start measure time for the first half
-            start = clock();
+            // the user have 2 minetes to answer if he want to send again
+            if (userDesitionTimeOut)
+            {
+                struct timeval tv;
+                tv.tv_sec = 120;
+                tv.tv_usec = 0;
+                setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+                userDesitionTimeOut = false;
+            }
 
-            //receiv file from clint
-            recv(clientSocket, buff, MAX, 0);
+            // receiv file from clint
+            int bytesRecv = recv(clientSocket, buff, MAX, 0);
+
+            // start measure time for the first half
+            if (!startTiming)
+            {
+                gettimeofday(&start, 0);
+                startTiming = true;
+            }
+
             charRead = strlen(buff);
             totalRecieved += charRead;
 
             if (reachedHalf(buff))
             {
-                printf("first half recived. Total read: %ld\n",totalRecieved);
-                //stop time 
-                end = clock();
-                cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-                timeFirstHalf += cpu_time_used;
+                // stop time fot first half
+                gettimeofday(&end, 0);
+                seconds = (double)(end.tv_sec - start.tv_sec);
+                microseconds = (double)(end.tv_usec - start.tv_usec);
+                double temp = seconds + (microseconds * 1e-6);
+                timing[counter] = temp;
+                timeFirstHalf += temp;
+                startTiming = false;
                 counter++;
 
-                //send Authentication key to clint
+                sendACK(clientSocket); // send ack for confirmation that Receiver get the first half
+
+                printf("first half recived. Total read: %ld\n", totalRecieved);
+
+                // send Authentication key to clint
+                printf("sendAuthentication\n");
                 sendAuthentication(clientSocket);
 
-                //measure time for last part
-                start = clock();
-                
+                // Change the CC Algorithm : reno
+                if (setsockopt(clientSocket, IPPROTO_TCP, TCP_CONGESTION, "reno", 4) != 0)
+                {
+                    perror("setsockopt field error");
+                    return -1;
+                }
+
+                // measure time for second part
+                if (!startTiming)
+                {
+                    gettimeofday(&start, 0);
+                    startTiming = true;
+                }
             }
 
-            if(finishAll(buff)){
-                printf("recive complete all. Total read: %ld\n",totalRecieved);
-                //stop time
-                end = clock();
-                cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
-                timeLastPart += cpu_time_used;
+            else if (finishAll(buff))
+            {
+                sendACK(clientSocket);
+                printf("recive complete all. Total read: %ld\n", totalRecieved);
+                // stop time for second part
+                gettimeofday(&end, 0);
+                seconds = (double)(end.tv_sec - start.tv_sec);
+                microseconds = (double)(end.tv_usec - start.tv_usec);
+                double temp = seconds + (microseconds * 1e-6);
+                timing[counter] = temp;
+                timeLastPart += temp;
+                startTiming = false;
+                counter++;
+                allFileRece += totalRecieved;
                 totalRecieved = 0;
+                userDesitionTimeOut = true;
             }
 
-            if (requestToExit(buff))
+            else if (requestToExit(buff))
             {
                 printf("request to exit recived\n");
                 break;
             }
-        }
-        printOutTimes(timeFirstHalf, timeLastPart, counter);
-    }
 
-    
+            bzero(buff, sizeof(buff)); // reset buffer
+        }
+        printOutTimes(timing, timeFirstHalf, timeLastPart, counter);
+        printf("average file received : %ld \n", allFileRece / (counter / 2));
+
+    }
 
     // TODO: All open clientSocket descriptors should be kept
     // in some container and closed as well.
@@ -157,14 +221,22 @@ int main()
     return 0;
 }
 
-void sendAuthentication(int clientSocket){
+void sendAuthentication(int clientSocket)
+{
     int xor = (5512 ^ 3065);
-    int bytesSent = send(clientSocket, &xor, 4, 0);
+    while (1)
+    {
+        int bytesSent = send(clientSocket, &xor, 4, 0);
+        if (recvACK(clientSocket))
+        {
+            break;
+        }
+    }
 }
 
 int reachedHalf(char buff[])
 {
-    int result = strcmp("half", buff);
+    int result = strcmp(HALFCODE, buff);
     if (result == 0)
     {
         return 1;
@@ -177,7 +249,7 @@ int reachedHalf(char buff[])
 
 int finishAll(char buff[])
 {
-    int result = strcmp("finish_all", buff);
+    int result = strcmp(FINISHCODE, buff);
     if (result == 0)
     {
         return 1;
@@ -190,7 +262,7 @@ int finishAll(char buff[])
 
 int requestToExit(char buff[])
 {
-    int result = strcmp("exit", buff);
+    int result = strcmp(EXITCODE, buff);
     if (result == 0)
     {
         return 1;
@@ -201,8 +273,42 @@ int requestToExit(char buff[])
     }
 }
 
-void printOutTimes(double timeFirstHalf,double timeLastPart,int counter){
-    printf("avarge time for first half : %f\n", (timeFirstHalf/counter));
-    printf("avarge time for last half : %f\n", (timeLastPart/counter));
+void printOutTimes(double timing[100], double timeFirstHalf, double timeLastPart, int counter)
+{
+    for (int i = 0; i < counter; i += 2)
+    {
+        printf("round %d : first part (seconds) : %f\n", (i / 2) + 1, timing[i]);
+        printf("round %d : second part (seconds) : %f\n", (i / 2) + 1, timing[i + 1]);
+    }
+
+    printf("avarge time for first half : %f\n", (timeFirstHalf / (counter / 2)));
+    printf("avarge time for last half : %f\n", (timeLastPart / (counter / 2)));
     printf("totle time : %f\n", (timeFirstHalf + timeLastPart));
+}
+
+int recvACK(int sock)//receive Ok from Sender
+{
+    char ACK[8];
+    bzero(ACK, sizeof(ACK));
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = TIMEOUT;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
+    recv(sock, ACK, sizeof(ACK), 0);
+    int result = strcmp("OK", ACK);
+    if (result == 0)
+    {
+        return 1;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+void sendACK(int sock)//send Ok to Sender
+{
+    char compMessage[] = "OK";
+    int messageLen2 = strlen(compMessage) + 1;
+    int byteSend = send(sock, compMessage, 8, 0);
 }
